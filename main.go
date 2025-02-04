@@ -9,7 +9,8 @@ import (
 )
 
 var mapPaginationKey = sync.Map{}
-var pageSize = 5
+
+const pageSize = 5
 
 type Products struct {
 	ID       uint    `json:"id"`
@@ -18,11 +19,11 @@ type Products struct {
 	Quantity uint    `json:"quantity"`
 }
 
-type ProductsPagination struct {
-	Products      []Products `json:"products"`
-	CurrentPage   int        `json:"current_page"`
-	TotalPages    int        `json:"total_pages"`
-	NextCursorKey string     `json:"next_cursor_key,omitempty"`
+type GenericPagination[T any] struct {
+	Content       []T    `json:"content"`
+	CurrentPage   int    `json:"current_page"`
+	TotalPages    int    `json:"total_pages"`
+	NextCursorKey string `json:"next_cursor_key,omitempty"`
 }
 
 func generatedProducts() []Products {
@@ -105,14 +106,14 @@ func getTodos(w http.ResponseWriter, r *http.Request) {
 		nextPageKey = ""
 	}
 
-	productsPagination := ProductsPagination{
-		Products:      pageProducts,
+	genericPagination := GenericPagination[Products]{
+		Content:       pageProducts,
 		TotalPages:    totalPage + 1,
 		CurrentPage:   page + 1,
 		NextCursorKey: nextPageKey,
 	}
 
-	jBytes, err := json.MarshalIndent(productsPagination, "", " ")
+	jBytes, err := json.MarshalIndent(genericPagination, "", " ")
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
