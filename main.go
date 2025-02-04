@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"github.com/google/uuid"
 	"net/http"
+	"sync"
 )
 
-var mapPaginationKey = map[string]int{}
+var mapPaginationKey = sync.Map{}
 var pageSize = 5
 
 type Products struct {
@@ -20,7 +21,7 @@ type ProductsPagination struct {
 	Products      []Products `json:"products"`
 	CurrentPage   int        `json:"current_page"`
 	TotalPages    int        `json:"total_pages"`
-	NextCursorKey string     `json:"next_cursor_key"`
+	NextCursorKey string     `json:"next_cursor_key,omitempty"`
 }
 
 func generatedProducts() []Products {
@@ -67,7 +68,7 @@ func getTodos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	paginationKey := r.URL.Query().Get("paginationKey")
-	nextPageKey := r.Header.Get("nextPageKey")
+	nextPageKey := w.Header().Get("nextPageKey")
 	if nextPageKey == "" {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -77,13 +78,13 @@ func getTodos(w http.ResponseWriter, r *http.Request) {
 
 	if paginationKey != "" {
 
-		v, ok := mapPaginationKey[paginationKey]
+		v, ok := mapPaginationKey.Load(paginationKey)
 		if !ok {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 
-		page = v
+		page = v.(int)
 	}
 
 	products := generatedProducts()
@@ -97,6 +98,10 @@ func getTodos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pageProducts := products[offset:limit]
+
+	if totalPage == page {
+		nextPageKey = ""
+	}
 
 	productsPagination := ProductsPagination{
 		Products:      pageProducts,
@@ -125,25 +130,24 @@ func paginationValidator(next http.Handler) http.Handler {
 
 			nextPageKey := uuid.New().String()
 			pageNumber := 1
-
-			mapPaginationKey[nextPageKey] = pageNumber
-			r.Header.Add("nextPageKey", nextPageKey)
+			mapPaginationKey.Store(nextPageKey, pageNumber)
+			w.Header().Add("nextPageKey", nextPageKey)
 
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		pageNumber, ok := mapPaginationKey[paginationKey]
+		pageNumber, ok := mapPaginationKey.Load(paginationKey)
 		if !ok {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
-		r.Header.Add("page", string(rune(pageNumber)))
+		page := pageNumber.(int)
 		nextPageKey := uuid.New().String()
-		r.Header.Add("nextPageKey", nextPageKey)
+		w.Header().Set("nextPageKey", nextPageKey)
 
-		mapPaginationKey[nextPageKey] = pageNumber + 1
+		mapPaginationKey.Store(nextPageKey, page+1)
 
 		next.ServeHTTP(w, r)
 	})
