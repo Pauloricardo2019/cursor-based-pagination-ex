@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"github.com/google/uuid"
 	"net/http"
+	"strconv"
 	"sync"
 )
 
@@ -67,10 +68,12 @@ func getTodos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	paginationKey := r.URL.Query().Get("paginationKey")
-	nextPageKey := w.Header().Get("nextPageKey")
+	paginationKey := r.Header.Get("paginationKey")
+	nextPageKey := r.Header.Get("nextPageKey")
+	currentPage := r.Header.Get("currentPage")
+
 	if nextPageKey == "" {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
@@ -78,13 +81,12 @@ func getTodos(w http.ResponseWriter, r *http.Request) {
 
 	if paginationKey != "" {
 
-		v, ok := mapPaginationKey.Load(paginationKey)
-		if !ok {
-			w.WriteHeader(http.StatusInternalServerError)
+		currentPageInt, err := strconv.Atoi(currentPage)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-
-		page = v.(int)
+		page = currentPageInt
 	}
 
 	products := generatedProducts()
@@ -115,9 +117,8 @@ func getTodos(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-
-	w.Write(jBytes)
 	w.WriteHeader(http.StatusOK)
+	w.Write(jBytes)
 	return
 }
 
@@ -126,12 +127,14 @@ func paginationValidator(next http.Handler) http.Handler {
 
 		paginationKey := r.URL.Query().Get("paginationKey")
 
+		r.Header.Set("paginationKey", paginationKey)
+
 		if paginationKey == "" {
 
 			nextPageKey := uuid.New().String()
 			pageNumber := 1
 			mapPaginationKey.Store(nextPageKey, pageNumber)
-			w.Header().Add("nextPageKey", nextPageKey)
+			r.Header.Set("nextPageKey", nextPageKey)
 
 			next.ServeHTTP(w, r)
 			return
@@ -144,8 +147,10 @@ func paginationValidator(next http.Handler) http.Handler {
 		}
 
 		page := pageNumber.(int)
+
 		nextPageKey := uuid.New().String()
-		w.Header().Set("nextPageKey", nextPageKey)
+		r.Header.Set("nextPageKey", nextPageKey)
+		r.Header.Set("currentPage", strconv.Itoa(page))
 
 		mapPaginationKey.Store(nextPageKey, page+1)
 
