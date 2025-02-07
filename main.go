@@ -2,21 +2,30 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/google/uuid"
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 )
 
 var mapPaginationKey = sync.Map{}
 
 const pageSize = 5
+const deadLineCursorTime = 30 //seconds
 
 type Products struct {
 	ID       uint    `json:"id"`
 	Name     string  `json:"name"`
 	Price    float64 `json:"price"`
 	Quantity uint    `json:"quantity"`
+}
+
+type CursorPagination struct {
+	Key       string
+	Page      int
+	CreatedAt time.Time
 }
 
 type GenericPagination[T any] struct {
@@ -58,8 +67,36 @@ func main() {
 
 	serverMux := http.NewServeMux()
 
-	serverMux.Handle("/todos", paginationValidator(http.HandlerFunc(getTodos)))
+	go func() {
+		fmt.Println("Inicializando go routine")
+		timeTicker := time.NewTicker(time.Second * deadLineCursorTime)
+		defer timeTicker.Stop()
 
+		for {
+			select {
+			case <-timeTicker.C:
+
+				mapPaginationKey.Range(func(key, value any) bool {
+					k := key
+					v := value.(CursorPagination)
+
+					fmt.Printf("Dentro do loop, key: %s\n", key.(string))
+
+					if !time.Now().Before(v.CreatedAt) {
+						fmt.Printf("removing this, the times has finished, key: %s\n", k.(string))
+						mapPaginationKey.Delete(k)
+					}
+
+					return true
+				})
+
+			}
+		}
+
+	}()
+
+	serverMux.Handle("/todos", paginationValidator(http.HandlerFunc(getTodos)))
+	fmt.Println("http://localhost:8080")
 	http.ListenAndServe(":8080", serverMux)
 }
 
@@ -134,7 +171,7 @@ func paginationValidator(next http.Handler) http.Handler {
 
 			nextPageKey := uuid.New().String()
 			pageNumber := 1
-			mapPaginationKey.Store(nextPageKey, pageNumber)
+			mapPaginationKey.Store(nextPageKey, CursorPagination{Key: nextPageKey, Page: pageNumber, CreatedAt: time.Now().Add(time.Second * deadLineCursorTime)})
 			r.Header.Set("nextPageKey", nextPageKey)
 
 			next.ServeHTTP(w, r)
@@ -147,13 +184,14 @@ func paginationValidator(next http.Handler) http.Handler {
 			return
 		}
 
-		page := pageNumber.(int)
+		cursorPagination := pageNumber.(CursorPagination)
 
 		nextPageKey := uuid.New().String()
-		r.Header.Set("nextPageKey", nextPageKey)
-		r.Header.Set("currentPage", strconv.Itoa(page))
 
-		mapPaginationKey.Store(nextPageKey, page+1)
+		mapPaginationKey.Store(nextPageKey, CursorPagination{Key: nextPageKey, Page: cursorPagination.Page + 1, CreatedAt: time.Now().Add(time.Second * deadLineCursorTime)})
+
+		r.Header.Set("nextPageKey", nextPageKey)
+		r.Header.Set("currentPage", strconv.Itoa(cursorPagination.Page))
 
 		next.ServeHTTP(w, r)
 	})
